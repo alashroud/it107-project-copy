@@ -1,5 +1,7 @@
 // Shared fallback rates used when the upstream service or API key is unavailable.
-// Mirrors the frontend mock data to keep responses consistent.
+// Mirrors the frontend mock data to keep responses consistent. These are
+// illustrative mock values (not strict reciprocals) meant only for graceful
+// degradation when real rates are unreachable.
 const FALLBACK_RATES = {
   USD: { EUR: 0.85, GBP: 0.73, JPY: 110.0, CAD: 1.25, AUD: 1.35, CHF: 0.92, CNY: 6.45, INR: 75.0, BRL: 5.2, PHP: 58.2, KRW: 1340, MXN: 17.2 },
   EUR: { USD: 1.18, GBP: 0.86, JPY: 129.0, CAD: 1.47, AUD: 1.59, CHF: 1.08, CNY: 7.59, INR: 88.0, BRL: 6.1, PHP: 63.5 },
