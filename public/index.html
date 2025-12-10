@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Currency Converter - Real-time Exchange Rates</title>
+    <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+    <header class="app-header">
+        <h1>Currency Converter</h1>
+        <p>Get real-time exchange rates and convert between currencies instantly</p>
+    </header>
+
+    <main class="converter-main">
+        <div class="converter-container">
+            <div class="converter-card">
+                <div class="input-section">
+                    <div class="amount-input">
+                        <label for="amount">Amount</label>
+                        <input type="number" id="amount" placeholder="Enter amount" min="0" step="0.01" />
+                    </div>
+
+                    <div class="currency-selectors">
+                        <div class="currency-from">
+                            <label for="fromCurrency">From</label>
+                            <select id="fromCurrency"></select>
+                        </div>
+
+                        <button id="swapCurrencies" class="swap-btn" title="Swap currencies">Swap</button>
+
+                        <div class="currency-to">
+                            <label for="toCurrency">To</label>
+                            <select id="toCurrency"></select>
+                        </div>
+                    </div>
+
+                    <button id="convertBtn" class="convert-btn">Convert</button>
+                </div>
+
+                <div class="result-section">
+                    <div id="loading" class="loading hidden">
+                        <div class="spinner"></div>
+                        <p>Fetching exchange rates...</p>
+                    </div>
+
+                    <div id="result" class="result hidden">
+                        <div class="result-amount">
+                            <span id="convertedAmount">0.00</span>
+                            <span id="toCurrencySymbol" class="currency-symbol"></span>
+                        </div>
+                        <div class="result-details">
+                            <p class="exchange-rate">
+                                <span id="exchangeRate">1.00</span>
+                                <span id="fromCurrencySymbol"></span>
+                                =
+                                <span id="toCurrencyRate"></span>
+                                <span id="toCurrencyCode"></span>
+                            </p>
+                            <p class="last-updated">
+                                Last updated:
+                                <span id="lastUpdated"></span>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div id="error" class="error hidden">
+                        <div class="error-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" role="img" focusable="false">
+                                <path d="M12 3L1 21h22L12 3z" fill="#FACC15"></path>
+                                <rect x="11" y="9" width="2" height="6" fill="#e74c3c"></rect>
+                                <circle cx="12" cy="17" r="1.25" fill="#e74c3c"></circle>
+                            </svg>
+                        </div>
+                        <h3>Oops! Something went wrong</h3>
+                        <p id="errorMessage">Could not fetch data. Please try again.</p>
+                        <button id="retryBtn" class="retry-btn">Try Again</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <h3>About This Converter</h3>
+                <p>
+                    This currency converter demonstrates real-time data fetching through a secure backend
+                    API. It allows users to convert amounts between various world currencies with
+                    up-to-date exchange rates without exposing any API keys in the browser.
+                </p>
+            </div>
+        </div>
+    </main>
+
+    <footer class="app-footer">
+        <p>
+            Data provided by
+            <a href="https://exchangerate-api.com" target="_blank" rel="noopener">ExchangeRate-API</a>
+        </p>
+        <p>&copy; 2025 IT 110 Group Project</p>
+    </footer>
+
+    <script src="./js/converter.js"></script>
+</body>
+</html>
+
+
