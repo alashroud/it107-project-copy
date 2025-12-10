@@ -8,6 +8,7 @@ require('dotenv').config();
 
 // Import logging utilities
 const { logger, logRequest, logSecurityEvent, logError, getClientIP } = require('./utils/logger');
+const { getFallbackRate } = require('./utils/fallbackRates');
 
 const app = express();
 // Body parsing limits (protect from large payload DoS)
@@ -133,21 +134,6 @@ function validateCurrencyCode(code) {
     return /^[A-Z]{3}$/.test(code) && ALLOWED_CURRENCIES.has(code);
 }
 
-// Lightweight mock rates used when the upstream key is missing or unavailable.
-// Mirrors the frontend fallback so UX stays consistent.
-const FALLBACK_RATES = {
-    USD: { EUR: 0.85, GBP: 0.73, JPY: 110.0, CAD: 1.25, AUD: 1.35, CHF: 0.92, CNY: 6.45, INR: 75.0, BRL: 5.2, PHP: 58.2, KRW: 1340, MXN: 17.2 },
-    EUR: { USD: 1.18, GBP: 0.86, JPY: 129.0, CAD: 1.47, AUD: 1.59, CHF: 1.08, CNY: 7.59, INR: 88.0, BRL: 6.1, PHP: 63.5 },
-    PHP: { USD: 0.017, EUR: 0.016, JPY: 1.9, GBP: 0.014, AUD: 0.023 },
-    JPY: { USD: 0.0091, EUR: 0.0077, GBP: 0.0067, PHP: 0.53, INR: 0.68 }
-};
-
-function getFallbackRate(fromCurrency, toCurrency) {
-    const base = FALLBACK_RATES[fromCurrency];
-    const rate = (base && base[toCurrency]) || 1.0;
-    return { rate, lastUpdated: new Date().toISOString() };
-}
-
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', (req, res) => {
@@ -226,7 +212,7 @@ app.get('/api/convert', async (req, res) => {
             convertedAmount,
             from: fromCurrency,
             to: toCurrency,
-            lastUpdated: lastUpdated || fallback.lastUpdated,
+            lastUpdated: lastUpdated || new Date().toISOString(),
             source
         });
     };
@@ -236,7 +222,8 @@ app.get('/api/convert', async (req, res) => {
             path: req.path,
             ip: getClientIP(req),
             fromCurrency,
-            toCurrency
+            toCurrency,
+            fallbackDefaulted: fallback.defaulted
         });
         return respondWithRate(fallback.rate, 'fallback', fallback.lastUpdated);
     }
@@ -280,7 +267,8 @@ app.get('/api/convert', async (req, res) => {
         logger.warn('Using fallback rate due to upstream failure', {
             fromCurrency,
             toCurrency,
-            path: req.path
+            path: req.path,
+            fallbackDefaulted: fallback.defaulted
         });
         return respondWithRate(fallback.rate, 'fallback', fallback.lastUpdated);
     }
