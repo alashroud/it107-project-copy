@@ -133,6 +133,21 @@ function validateCurrencyCode(code) {
     return /^[A-Z]{3}$/.test(code) && ALLOWED_CURRENCIES.has(code);
 }
 
+// Lightweight mock rates used when the upstream key is missing or unavailable.
+// Mirrors the frontend fallback so UX stays consistent.
+const FALLBACK_RATES = {
+    USD: { EUR: 0.85, GBP: 0.73, JPY: 110.0, CAD: 1.25, AUD: 1.35, CHF: 0.92, CNY: 6.45, INR: 75.0, BRL: 5.2, PHP: 58.2, KRW: 1340, MXN: 17.2 },
+    EUR: { USD: 1.18, GBP: 0.86, JPY: 129.0, CAD: 1.47, AUD: 1.59, CHF: 1.08, CNY: 7.59, INR: 88.0, BRL: 6.1, PHP: 63.5 },
+    PHP: { USD: 0.017, EUR: 0.016, JPY: 1.9, GBP: 0.014, AUD: 0.023 },
+    JPY: { USD: 0.0091, EUR: 0.0077, GBP: 0.0067, PHP: 0.53, INR: 0.68 }
+};
+
+function getFallbackRate(fromCurrency, toCurrency) {
+    const base = FALLBACK_RATES[fromCurrency];
+    const rate = (base && base[toCurrency]) || 1.0;
+    return { rate, lastUpdated: new Date().toISOString() };
+}
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', (req, res) => {
@@ -156,14 +171,6 @@ app.get('/api/convert', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Missing required query parameters "from" and "to".' });
     }
 
-    if (!apiKey) {
-        logError(new Error('Exchange rate API key is not configured'), {
-            path: req.path,
-            ip: getClientIP(req)
-        });
-        return res.status(500).json({ success: false, error: 'Exchange rate API key is not configured on the server.' });
-    }
-
     const fromCurrency = String(from).toUpperCase();
     const toCurrency = String(to).toUpperCase();
 
@@ -177,34 +184,9 @@ app.get('/api/convert', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Currency codes must be supported 3-letter ISO codes.' });
     }
 
-    const url = `${EXCHANGE_API_BASE}/${apiKey}/latest/${fromCurrency}`;
+    const fallback = getFallbackRate(fromCurrency, toCurrency);
 
-    try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Upstream API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (data.result !== 'success' || !data.conversion_rates) {
-            throw new Error(data.error || 'Unexpected response from ExchangeRate-API');
-        }
-
-        const rate = data.conversion_rates[toCurrency];
-        if (typeof rate !== 'number') {
-            logger.warn('Exchange rate not available', {
-                fromCurrency,
-                toCurrency,
-                path: req.path,
-                ip: getClientIP(req)
-            });
-            return res.status(400).json({
-                success: false,
-                error: `Exchange rate from ${fromCurrency} to ${toCurrency} not available.`
-            });
-        }
-
-        // Strict amount parsing: no exponent, only plain decimal, limited precision and non-negative
+    const respondWithRate = (rate, source, lastUpdated) => {
         let convertedAmount = null;
         if (Object.prototype.hasOwnProperty.call(req.query, 'amount')) {
             const rawAmt = String(amount).trim();
@@ -244,8 +226,49 @@ app.get('/api/convert', async (req, res) => {
             convertedAmount,
             from: fromCurrency,
             to: toCurrency,
-            lastUpdated: data.time_last_update_utc
+            lastUpdated: lastUpdated || fallback.lastUpdated,
+            source
         });
+    };
+
+    if (!apiKey) {
+        logger.warn('Exchange rate API key is not configured; using fallback data', {
+            path: req.path,
+            ip: getClientIP(req),
+            fromCurrency,
+            toCurrency
+        });
+        return respondWithRate(fallback.rate, 'fallback', fallback.lastUpdated);
+    }
+
+    const url = `${EXCHANGE_API_BASE}/${apiKey}/latest/${fromCurrency}`;
+
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Upstream API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (data.result !== 'success' || !data.conversion_rates) {
+            throw new Error(data.error || 'Unexpected response from ExchangeRate-API');
+        }
+
+        const rate = data.conversion_rates[toCurrency];
+        if (typeof rate !== 'number') {
+            logger.warn('Exchange rate not available', {
+                fromCurrency,
+                toCurrency,
+                path: req.path,
+                ip: getClientIP(req)
+            });
+            return res.status(400).json({
+                success: false,
+                error: `Exchange rate from ${fromCurrency} to ${toCurrency} not available.`
+            });
+        }
+
+        return respondWithRate(rate, 'upstream', data.time_last_update_utc);
     } catch (error) {
         logError(error, {
             path: req.path,
@@ -254,10 +277,12 @@ app.get('/api/convert', async (req, res) => {
             ip: getClientIP(req),
             userAgent: req.headers['user-agent']
         });
-        return res.status(502).json({
-            success: false,
-            error: 'Failed to fetch exchange rate from upstream API.'
+        logger.warn('Using fallback rate due to upstream failure', {
+            fromCurrency,
+            toCurrency,
+            path: req.path
         });
+        return respondWithRate(fallback.rate, 'fallback', fallback.lastUpdated);
     }
 });
 
@@ -305,4 +330,3 @@ const REQUEST_TIMEOUT_MS_NUM = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 if (Number.isFinite(REQUEST_TIMEOUT_MS_NUM) && REQUEST_TIMEOUT_MS_NUM > 0) {
     server.setTimeout(REQUEST_TIMEOUT_MS_NUM);
 }
-

@@ -43,6 +43,20 @@ function createAbortController() {
   return new AC();
 }
 
+// Fallback mock rates (matches frontend fallback to keep UX consistent)
+const FALLBACK_RATES = {
+  USD: { EUR: 0.85, GBP: 0.73, JPY: 110.0, CAD: 1.25, AUD: 1.35, CHF: 0.92, CNY: 6.45, INR: 75.0, BRL: 5.2, PHP: 58.2, KRW: 1340, MXN: 17.2 },
+  EUR: { USD: 1.18, GBP: 0.86, JPY: 129.0, CAD: 1.47, AUD: 1.59, CHF: 1.08, CNY: 7.59, INR: 88.0, BRL: 6.1, PHP: 63.5 },
+  PHP: { USD: 0.017, EUR: 0.016, JPY: 1.9, GBP: 0.014, AUD: 0.023 },
+  JPY: { USD: 0.0091, EUR: 0.0077, GBP: 0.0067, PHP: 0.53, INR: 0.68 }
+};
+
+function getFallbackRate(fromCurrency, toCurrency) {
+  const base = FALLBACK_RATES[fromCurrency];
+  const rate = (base && base[toCurrency]) || 1.0;
+  return { rate, lastUpdated: new Date().toISOString() };
+}
+
 function validateAndNormalizeQuery(query) {
   const keys = Object.keys(query || {});
   for (const k of keys) {
@@ -191,12 +205,19 @@ export default async function handler(req, res) {
 
   const { from: fromCurrency, to: toCurrency, amount } = validation;
 
+  const fallbackRate = getFallbackRate(fromCurrency, toCurrency);
   const apiKey = process.env.EXCHANGE_RATE_API_KEY;
   if (!apiKey) {
-    console.error('Missing EXCHANGE_RATE_API_KEY environment variable');
-    return res.status(500).json({
-      success: false,
-      error: 'Exchange rate API key is not configured on the server.'
+    console.warn('Missing EXCHANGE_RATE_API_KEY environment variable; using fallback data');
+    const convertedAmount = amount !== null ? Number((amount * fallbackRate.rate).toFixed(6)) : null;
+    return res.status(200).json({
+      success: true,
+      rate: fallbackRate.rate,
+      convertedAmount,
+      from: fromCurrency,
+      to: toCurrency,
+      lastUpdated: fallbackRate.lastUpdated,
+      source: 'fallback'
     });
   }
 
@@ -247,9 +268,9 @@ export default async function handler(req, res) {
   } catch (err) {
     // If upstream failed but we have any cache entry (even if not containing target rate),
     // respond with cache if possible.
-    const fallback = readFromCache(fromCurrency);
-    if (fallback && typeof fallback.conversion_rates?.[toCurrency] === 'number') {
-      const rate = fallback.conversion_rates[toCurrency];
+    const cached = readFromCache(fromCurrency);
+    if (cached && typeof cached.conversion_rates?.[toCurrency] === 'number') {
+      const rate = cached.conversion_rates[toCurrency];
       const convertedAmount = amount !== null ? Number((amount * rate).toFixed(6)) : null;
 
       console.warn('Using cached data due to upstream failure', { error: err?.message });
@@ -259,18 +280,24 @@ export default async function handler(req, res) {
         convertedAmount,
         from: fromCurrency,
         to: toCurrency,
-        lastUpdated: fallback.time_last_update_utc,
+        lastUpdated: cached.time_last_update_utc,
         source: 'cache-fallback'
       });
     }
 
     // No cache available — return upstream failure
     const isAbort = err && err.name === 'AbortError';
-    console.error('Upstream fetch failed', { message: err?.message, stack: err?.stack, timeout: isAbort ? TIMEOUT_MS : undefined });
+    console.warn('Upstream fetch failed, using fallback data', { message: err?.message, stack: err?.stack, timeout: isAbort ? TIMEOUT_MS : undefined });
+    const convertedAmount = amount !== null ? Number((amount * fallbackRate.rate).toFixed(6)) : null;
 
-    return res.status(502).json({
-      success: false,
-      error: isAbort ? 'Upstream request timed out' : 'Failed to fetch exchange rate from upstream API.'
+    return res.status(200).json({
+      success: true,
+      rate: fallbackRate.rate,
+      convertedAmount,
+      from: fromCurrency,
+      to: toCurrency,
+      lastUpdated: fallbackRate.lastUpdated,
+      source: 'fallback'
     });
   }
 }
