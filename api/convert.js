@@ -26,6 +26,7 @@ const TIMEOUT_MS = Number(process.env.UPSTREAM_TIMEOUT_MS || 8000);
 
 // Retry count for transient failures (429/5xx/network). Default 1 retry
 const RETRIES = Number(process.env.UPSTREAM_RETRIES || 1);
+const { getFallbackRate } = require('../utils/fallbackRates');
 
 // Use global fetch if available; fallback to node-fetch for older runtimes
 const fetcher = (typeof fetch !== 'undefined')
@@ -191,12 +192,21 @@ export default async function handler(req, res) {
 
   const { from: fromCurrency, to: toCurrency, amount } = validation;
 
+  const fallbackRate = getFallbackRate(fromCurrency, toCurrency);
   const apiKey = process.env.EXCHANGE_RATE_API_KEY;
   if (!apiKey) {
-    console.error('Missing EXCHANGE_RATE_API_KEY environment variable');
-    return res.status(500).json({
-      success: false,
-      error: 'Exchange rate API key is not configured on the server.'
+    console.warn('Missing EXCHANGE_RATE_API_KEY environment variable; using fallback data', {
+      fallbackDefaulted: fallbackRate.defaulted
+    });
+    const convertedAmount = amount !== null ? Number((amount * fallbackRate.rate).toFixed(6)) : null;
+    return res.status(200).json({
+      success: true,
+      rate: fallbackRate.rate,
+      convertedAmount,
+      from: fromCurrency,
+      to: toCurrency,
+      lastUpdated: fallbackRate.lastUpdated,
+      source: 'fallback'
     });
   }
 
@@ -247,9 +257,9 @@ export default async function handler(req, res) {
   } catch (err) {
     // If upstream failed but we have any cache entry (even if not containing target rate),
     // respond with cache if possible.
-    const fallback = readFromCache(fromCurrency);
-    if (fallback && typeof fallback.conversion_rates?.[toCurrency] === 'number') {
-      const rate = fallback.conversion_rates[toCurrency];
+    const cached = readFromCache(fromCurrency);
+    if (cached && typeof cached.conversion_rates?.[toCurrency] === 'number') {
+      const rate = cached.conversion_rates[toCurrency];
       const convertedAmount = amount !== null ? Number((amount * rate).toFixed(6)) : null;
 
       console.warn('Using cached data due to upstream failure', { error: err?.message });
@@ -259,18 +269,28 @@ export default async function handler(req, res) {
         convertedAmount,
         from: fromCurrency,
         to: toCurrency,
-        lastUpdated: fallback.time_last_update_utc,
+        lastUpdated: cached.time_last_update_utc,
         source: 'cache-fallback'
       });
     }
 
     // No cache available — return upstream failure
     const isAbort = err && err.name === 'AbortError';
-    console.error('Upstream fetch failed', { message: err?.message, stack: err?.stack, timeout: isAbort ? TIMEOUT_MS : undefined });
+    console.warn('Upstream fetch failed, using fallback data', {
+      message: err?.message,
+      timeout: isAbort ? TIMEOUT_MS : undefined,
+      fallbackDefaulted: fallbackRate.defaulted
+    });
+    const convertedAmount = amount !== null ? Number((amount * fallbackRate.rate).toFixed(6)) : null;
 
-    return res.status(502).json({
-      success: false,
-      error: isAbort ? 'Upstream request timed out' : 'Failed to fetch exchange rate from upstream API.'
+    return res.status(200).json({
+      success: true,
+      rate: fallbackRate.rate,
+      convertedAmount,
+      from: fromCurrency,
+      to: toCurrency,
+      lastUpdated: fallbackRate.lastUpdated,
+      source: 'fallback'
     });
   }
 }
