@@ -113,6 +113,17 @@ function resolveUserIdentifier(user, fallback) {
     return (user && (user.email || user.id)) || fallback || null;
 }
 
+function ensureSupabaseAvailable(req, res, action) {
+    if (supabase) return true;
+    logSiemEvent('AUTH_FAILED', {
+        reason: 'Supabase not configured',
+        path: req.path,
+        action
+    }, req, req.correlationId);
+    res.status(500).json({ success: false, error: 'Authentication service unavailable.', correlationId: req.correlationId });
+    return false;
+}
+
 function createSession(username) {
     const token = uuidv4();
     const expiresAt = Date.now() + SESSION_TTL_MS;
@@ -185,15 +196,16 @@ const apiLimiter = rateLimit({
     standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
     legacyHeaders: false, // Disable the `X-RateLimit-*` headers
     // Skip rate limiting for health checks and security metrics (optional)
-    skip: (req) => req.path === '/api/health' || req.path === '/api/security/metrics' || req.path === '/api/signup'
+    skip: (req) => req.path === '/api/health' || req.path === '/api/security/metrics'
 });
 
 app.use('/api', apiLimiter);
 
 // Dedicated limiter for signup endpoint to reduce abuse
+const SIGNUP_LIMIT_DIVISOR = 5;
 const signupLimiter = rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,
-    max: Math.max(10, Math.floor(RATE_LIMIT_MAX_REQUESTS / 5)),
+    max: Math.max(10, Math.floor(RATE_LIMIT_MAX_REQUESTS / SIGNUP_LIMIT_DIVISOR)),
     handler: (req, res /*, next */) => {
         logSiemEvent('RATE_LIMIT_EXCEEDED', {
             route: req.originalUrl || req.url,
@@ -239,13 +251,7 @@ app.post('/api/login', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Username and password are required.', correlationId: req.correlationId });
     }
 
-    if (!supabase) {
-        logSiemEvent('AUTH_FAILED', {
-            reason: 'Supabase not configured',
-            path: req.path
-        }, req, req.correlationId);
-        return res.status(500).json({ success: false, error: 'Authentication service unavailable.', correlationId: req.correlationId });
-    }
+    if (!ensureSupabaseAvailable(req, res, 'login')) return;
 
     try {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -315,13 +321,7 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
         }, req, req.correlationId);
         return res.status(400).json({ success: false, error: 'Email and password are required.', correlationId: req.correlationId });
     }
-    if (!supabase) {
-        logSiemEvent('AUTH_FAILED', {
-            reason: 'Supabase not configured',
-            path: req.path
-        }, req, req.correlationId);
-        return res.status(500).json({ success: false, error: 'Authentication service unavailable.', correlationId: req.correlationId });
-    }
+    if (!ensureSupabaseAvailable(req, res, 'signup')) return;
     try {
         const { data, error } = await supabase.auth.signUp({
             email: String(email),
