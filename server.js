@@ -309,6 +309,10 @@ app.post('/api/logout', authMiddleware, (req, res) => {
 app.post('/api/signup', signupLimiter, async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) {
+        logSiemEvent('AUTH_FAILED', {
+            reason: 'Missing signup credentials',
+            path: req.path
+        }, req, req.correlationId);
         return res.status(400).json({ success: false, error: 'Email and password are required.', correlationId: req.correlationId });
     }
     if (!supabase) {
@@ -345,6 +349,10 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
         });
     } catch (err) {
         logError(err, { message: 'Supabase signup failed' });
+        logSiemEvent('AUTH_FAILED', {
+            reason: 'Supabase signup error',
+            error: err?.message
+        }, req, req.correlationId);
         return res.status(500).json({ success: false, error: 'Signup failed.', correlationId: req.correlationId });
     }
 });
