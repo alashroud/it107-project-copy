@@ -47,3 +47,4 @@ Use the "Log Out" control in the UI to end the session. You can sign back in any
 - In production, keep the Supabase anon key and any service keys in a secret manager or environment variable tooling. Do not commit secrets.
 - Keep `.env.local` out of version control to avoid exposing credentials.
 - You can rotate credentials at any time by updating `.env.local` and restarting the server.
+- Schema: The app only relies on Supabase Auth's built-in `auth.users` table (email/password). No custom tables are required for login. If you add profile data, create a separate table linked to `auth.users.id`.
