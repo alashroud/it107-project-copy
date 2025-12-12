@@ -12,7 +12,31 @@
         <p>Get real-time exchange rates and convert between currencies instantly</p>
     </header>
 
-    <main class="converter-main">
+    <section class="auth-card" id="authSection">
+        <div class="auth-header">
+            <h2>Sign in to use the converter</h2>
+            <p id="authHint">Use the demo credentials provided by your instructor.</p>
+        </div>
+        <form id="loginForm" class="auth-form">
+            <div class="form-field">
+                <label for="username">Username</label>
+                <input type="text" id="username" autocomplete="username" required />
+            </div>
+            <div class="form-field">
+                <label for="password">Password</label>
+                <input type="password" id="password" autocomplete="current-password" required />
+            </div>
+            <p class="auth-error hidden" id="loginError" role="alert"></p>
+            <button type="submit" class="convert-btn auth-submit">Log in</button>
+        </form>
+
+        <div id="authStatus" class="auth-status hidden">
+            <p>Signed in as <strong id="signedInUser"></strong></p>
+            <button id="logoutBtn" class="secondary-btn" type="button">Log out</button>
+        </div>
+    </section>
+
+    <main class="converter-main hidden" id="converterSection">
         <div class="converter-container">
             <div class="converter-card">
                 <div class="input-section">
@@ -101,5 +125,4 @@
     <script src="./js/converter.js"></script>
 </body>
 </html>
-
 

@@ -4,6 +4,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const fetch = (...args) => import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
+const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
 
 // Import logging utilities
@@ -69,7 +70,7 @@ const WILDCARD_ALLOWED = rawAllowed
 
 const ALLOW_CREDENTIALS = String(process.env.CORS_ALLOW_CREDENTIALS || 'false').toLowerCase() === 'true';
 const PREFLIGHT_MAX_AGE = Number(process.env.CORS_PREFLIGHT_MAX_AGE || 600);
-const ALLOWED_METHODS = (process.env.CORS_ALLOWED_METHODS || 'GET,OPTIONS').split(',').map(m => m.trim()).filter(Boolean);
+const ALLOWED_METHODS = (process.env.CORS_ALLOWED_METHODS || 'GET,POST,OPTIONS').split(',').map(m => m.trim()).filter(Boolean);
 const ALLOWED_HEADERS = (process.env.CORS_ALLOWED_HEADERS || 'Content-Type,Authorization').split(',').map(h => h.trim()).filter(Boolean);
 const EXPOSED_HEADERS = (process.env.CORS_EXPOSED_HEADERS || '').split(',').map(h => h.trim()).filter(Boolean);
 
@@ -97,6 +98,48 @@ const corsOptions = {
     // `optionsSuccessStatus` helps older browsers/clients that expect 200 instead of 204
     optionsSuccessStatus: Number(process.env.CORS_OPTIONS_SUCCESS_STATUS || 204)
 };
+
+// Simple login configuration using environment variables (with safe defaults for local use)
+const AUTH_USERNAME = process.env.APP_USERNAME || 'admin';
+const AUTH_PASSWORD = process.env.APP_PASSWORD || 'password123';
+const SESSION_TTL_MINUTES = Number(process.env.LOGIN_SESSION_TTL_MINUTES || 60);
+const SESSION_TTL_MS = Number.isFinite(SESSION_TTL_MINUTES) ? SESSION_TTL_MINUTES * 60 * 1000 : 60 * 60 * 1000;
+const activeSessions = new Map(); // token -> { username, expiresAt }
+
+function createSession(username) {
+    const token = uuidv4();
+    const expiresAt = Date.now() + SESSION_TTL_MS;
+    activeSessions.set(token, { username, expiresAt });
+    return { token, expiresAt };
+}
+
+function validateSession(token) {
+    const session = token && activeSessions.get(token);
+    if (!session) return null;
+    if (session.expiresAt <= Date.now()) {
+        activeSessions.delete(token);
+        return null;
+    }
+    return session;
+}
+
+function authMiddleware(req, res, next) {
+    const header = req.headers.authorization || '';
+    const match = header.match(/^Bearer\s+(.+)$/i);
+    const token = match && match[1];
+    const session = validateSession(token);
+    if (!session) {
+        logSiemEvent('AUTH_FAILED', {
+            reason: 'Missing or invalid token',
+            path: req.path
+        }, req, req.correlationId);
+        return res.status(401).json({ success: false, error: 'Unauthorized. Please log in again.', correlationId: req.correlationId });
+    }
+
+    req.user = { username: session.username };
+    req.authToken = token;
+    return next();
+}
 
 // CORS middleware with enhanced logging
 app.use('/api', (req, res, next) => {
@@ -163,6 +206,49 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+        logSiemEvent('AUTH_FAILED', {
+            reason: 'Missing credentials',
+            path: req.path
+        }, req, req.correlationId);
+        return res.status(400).json({ success: false, error: 'Username and password are required.', correlationId: req.correlationId });
+    }
+
+    if (String(username) !== AUTH_USERNAME || String(password) !== AUTH_PASSWORD) {
+        logSiemEvent('AUTH_FAILED', {
+            reason: 'Invalid credentials',
+            username: String(username).slice(0, 64)
+        }, req, req.correlationId);
+        return res.status(401).json({ success: false, error: 'Invalid username or password.', correlationId: req.correlationId });
+    }
+
+    const session = createSession(String(username));
+    logSiemEvent('AUTH_SUCCESS', {
+        username: String(username)
+    }, req, req.correlationId);
+
+    return res.json({
+        success: true,
+        token: session.token,
+        username: String(username),
+        expiresAt: session.expiresAt,
+        expiresInSeconds: Math.floor((session.expiresAt - Date.now()) / 1000),
+        correlationId: req.correlationId
+    });
+});
+
+app.post('/api/logout', authMiddleware, (req, res) => {
+    if (req.authToken) {
+        activeSessions.delete(req.authToken);
+    }
+    logSiemEvent('AUTH_LOGOUT', {
+        username: req.user?.username
+    }, req, req.correlationId);
+    return res.json({ success: true, correlationId: req.correlationId });
+});
+
 // SIEM Security Metrics Endpoint
 // ⚠️  WARNING: This endpoint exposes sensitive security information.
 // ⚠️  In production, this MUST be protected with:
@@ -171,12 +257,12 @@ app.get('/api/health', (req, res) => {
 //     - Network-level restrictions (VPN, internal network only)
 //     - Or completely disabled for public access
 // Example protection: app.get('/api/security/metrics', hmacAuthMiddleware(process.env.METRICS_SECRET), (req, res) => {
-app.get('/api/security/metrics', (req, res) => {
+app.get('/api/security/metrics', authMiddleware, (req, res) => {
     // Log all access to security metrics for auditing
     logSiemEvent('DATA_ACCESS', {
         resource: 'security-metrics',
         action: 'read',
-        warning: 'Endpoint accessed without authentication - secure in production'
+        auth: 'session'
     }, req, req.correlationId);
 
     const metrics = getSecurityMetrics();
@@ -188,7 +274,7 @@ app.get('/api/security/metrics', (req, res) => {
     });
 });
 
-app.get('/api/convert', async (req, res) => {
+app.get('/api/convert', authMiddleware, async (req, res) => {
     const { from, to, amount } = req.query || {};
     const apiKey = process.env.EXCHANGE_RATE_API_KEY;
 

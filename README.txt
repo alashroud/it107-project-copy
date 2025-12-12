@@ -41,6 +41,15 @@ Local Setup
    Visit http://localhost:3000 to use the converter. The Express server serves
    static files and proxies `/api/convert` using your secret key.
 
+Login
+-----
+The converter now requires a simple login. Configure credentials with environment
+variables (defaults: `admin` / `password123`):
+
+- `APP_USERNAME` — username for login
+- `APP_PASSWORD` — password for login
+- `LOGIN_SESSION_TTL_MINUTES` — session duration in minutes (default: 60)
+
 Deployment
 ----------
 1. Make sure `.env.local` (or the Vercel dashboard) contains
