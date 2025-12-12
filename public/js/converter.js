@@ -117,11 +117,20 @@ class CurrencyConverter {
             { code: 'SDG', name: 'Sudanese Pound' }
         ];
 
+        this.authToken = null;
+        this.authUser = null;
+        this.authExpiresAt = 0;
+
         this.initializeElements();
         this.attachEventListeners();
         this.populateCurrencyOptions();
         this.setupFilters();
-        this.loadInitialData();
+        this.initializeDefaults();
+        this.loadStoredAuth();
+        this.updateAuthUI();
+        if (this.isAuthenticated()) {
+            this.convertCurrency();
+        }
     }
 
     initializeElements() {
@@ -144,12 +153,26 @@ class CurrencyConverter {
         this.toCurrencyCode = document.getElementById('toCurrencyCode');
         this.lastUpdated = document.getElementById('lastUpdated');
         this.errorMessage = document.getElementById('errorMessage');
+
+        this.loginForm = document.getElementById('loginForm');
+        this.usernameInput = document.getElementById('username');
+        this.passwordInput = document.getElementById('password');
+        this.loginError = document.getElementById('loginError');
+        this.authStatus = document.getElementById('authStatus');
+        this.signedInUser = document.getElementById('signedInUser');
+        this.logoutBtn = document.getElementById('logoutBtn');
+        this.converterSection = document.getElementById('converterSection');
     }
 
     attachEventListeners() {
         this.convertBtn.addEventListener('click', () => this.convertCurrency());
         this.swapBtn.addEventListener('click', () => this.swapCurrencies());
         this.retryBtn.addEventListener('click', () => this.convertCurrency());
+        this.loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.login();
+        });
+        this.logoutBtn.addEventListener('click', () => this.logout());
 
         this.amountInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.convertCurrency();
@@ -172,11 +195,10 @@ class CurrencyConverter {
         });
     }
 
-    loadInitialData() {
+    initializeDefaults() {
         this.amountInput.value = '100';
         this.fromCurrencySelect.value = 'USD';
         this.toCurrencySelect.value = 'EUR';
-        this.convertCurrency();
     }
 
     populateCurrencyOptions() {
@@ -250,7 +272,119 @@ class CurrencyConverter {
         });
     }
 
+    loadStoredAuth() {
+        const token = localStorage.getItem('authToken');
+        const username = localStorage.getItem('authUser');
+        const expiresAt = Number(localStorage.getItem('authExpiresAt') || 0);
+        if (token && expiresAt > Date.now()) {
+            this.authToken = token;
+            this.authUser = username;
+            this.authExpiresAt = expiresAt;
+        } else {
+            this.clearStoredAuth();
+        }
+    }
+
+    persistAuth() {
+        if (!this.authToken) return;
+        localStorage.setItem('authToken', this.authToken);
+        if (this.authUser) {
+            localStorage.setItem('authUser', this.authUser);
+        }
+        if (this.authExpiresAt) {
+            localStorage.setItem('authExpiresAt', String(this.authExpiresAt));
+        }
+    }
+
+    clearStoredAuth() {
+        this.authToken = null;
+        this.authUser = null;
+        this.authExpiresAt = 0;
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authUser');
+        localStorage.removeItem('authExpiresAt');
+    }
+
+    isAuthenticated() {
+        const valid = Boolean(this.authToken && this.authExpiresAt > Date.now());
+        if (!valid && this.authToken) {
+            this.clearStoredAuth();
+        }
+        return valid;
+    }
+
+    updateAuthUI() {
+        const authed = this.isAuthenticated();
+        if (authed) {
+            this.loginError.classList.add('hidden');
+            this.authStatus.classList.remove('hidden');
+            this.loginForm.classList.add('hidden');
+            this.converterSection.classList.remove('hidden');
+            this.signedInUser.textContent = this.authUser || 'User';
+        } else {
+            this.authStatus.classList.add('hidden');
+            this.loginForm.classList.remove('hidden');
+            this.converterSection.classList.add('hidden');
+            this.loginError.classList.add('hidden');
+        }
+    }
+
+    async login() {
+        const username = this.usernameInput.value.trim();
+        const password = this.passwordInput.value;
+
+        if (!username || !password) {
+            this.loginError.textContent = 'Please enter both username and password.';
+            this.loginError.classList.remove('hidden');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Login failed');
+            }
+
+            this.authToken = data.token;
+            this.authUser = data.username || username;
+            this.authExpiresAt = Number(data.expiresAt || Date.now());
+            this.persistAuth();
+            this.updateAuthUI();
+            this.convertCurrency();
+        } catch (error) {
+            this.loginError.textContent = error.message || 'Login failed. Please try again.';
+            this.loginError.classList.remove('hidden');
+        }
+    }
+
+    logout() {
+        if (this.authToken) {
+            fetch('/api/logout', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${this.authToken}` }
+            }).catch(() => {});
+        }
+        this.clearStoredAuth();
+        this.hideAllResults();
+        this.updateAuthUI();
+    }
+
+    handleUnauthorized() {
+        this.logout();
+        this.loginError.textContent = 'Your session expired. Please sign in again.';
+        this.loginError.classList.remove('hidden');
+    }
+
     async convertCurrency() {
+        if (!this.isAuthenticated()) {
+            this.updateAuthUI();
+            return;
+        }
         const amount = parseFloat(this.amountInput.value);
         const fromCurrency = this.fromCurrencySelect.value;
         const toCurrency = this.toCurrencySelect.value;
@@ -290,7 +424,15 @@ class CurrencyConverter {
         });
 
         try {
-            const response = await fetch(`/api/convert?${params.toString()}`);
+            const headers = {};
+            if (this.authToken) {
+                headers.Authorization = `Bearer ${this.authToken}`;
+            }
+            const response = await fetch(`/api/convert?${params.toString()}`, { headers });
+            if (response.status === 401) {
+                this.handleUnauthorized();
+                throw new Error('Unauthorized');
+            }
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -412,5 +554,3 @@ class CurrencyConverter {
 }
 
 document.addEventListener('DOMContentLoaded', () => new CurrencyConverter());
-
-
