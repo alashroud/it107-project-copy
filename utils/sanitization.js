@@ -33,13 +33,11 @@ function sanitizeString(input, options = {}) {
     sanitized = sanitized.substring(0, maxLength);
   }
 
-  // Remove HTML tags if not allowed
-  if (!allowHtml) {
-    sanitized = sanitized.replace(/<[^>]*>/g, '');
-  }
-
   // HTML entity encoding for special characters
+  // Note: We only encode, not remove tags, to avoid incomplete sanitization issues.
+  // Once encoded, < becomes &lt; and > becomes &gt;, rendering any tags harmless.
   if (!allowHtml) {
+    // Encode in the correct order: & first to avoid double-encoding
     sanitized = sanitized
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')

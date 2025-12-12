@@ -241,12 +241,18 @@ function detectSuspiciousActivity(req) {
       /exec(\s|\+)+(s|x)p\w+/i
     ],
     XSS: [
-      /<script[\s\S]*?>[\s\S]*?<\/script>/i,
+      // Match script tags - broad pattern to catch variations with whitespace
+      // This detects script start tags - full tag matching is complex and prone to bypass
+      /<script/i,
       /javascript:/i,
-      /on\w+\s*=\s*["']?[^"'>\s]+/i,
+      /on\w+\s*=/i,  // Event handlers (onclick, onerror, etc.)
       /<iframe/i,
-      /onerror\s*=/i,
-      /onload\s*=/i
+      // Additional XSS vectors
+      /<object/i,
+      /<embed/i,
+      /data:\s*text\/html/i,
+      /<svg/i,
+      /formaction\s*=/i
     ],
     PATH_TRAVERSAL: [
       /\.\.[\/\\]/,
