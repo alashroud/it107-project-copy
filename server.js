@@ -110,13 +110,8 @@ const SESSION_TTL_MS = Number.isFinite(SESSION_TTL_MINUTES) ? SESSION_TTL_MINUTE
 const activeSessions = new Map(); // token -> { username, expiresAt }
 
 function resolveUserIdentifier(user, fallback) {
-    if (user && (user.email || user.id)) {
-        return user.email || user.id;
-    }
-    if (!user) {
-        return fallback || null;
-    }
-    return null;
+    if (user && (user.email || user.id)) return user.email || user.id;
+    return fallback || null;
 }
 
 function ensureSupabaseAvailable(req, res, action) {
@@ -208,11 +203,11 @@ const apiLimiter = rateLimit({
 app.use('/api', apiLimiter);
 
 // Dedicated limiter for signup endpoint to reduce abuse
-const SIGNUP_LIMIT_DIVISOR = Number(process.env.SIGNUP_RATE_LIMIT_DIVISOR || 5);
-const SIGNUP_LIMIT_MIN = Number(process.env.SIGNUP_RATE_LIMIT_MIN || 10);
+const SIGNUP_RATE_LIMIT_DIVISOR = Number(process.env.SIGNUP_RATE_LIMIT_DIVISOR || 5);
+const SIGNUP_RATE_LIMIT_MIN = Number(process.env.SIGNUP_RATE_LIMIT_MIN || 10);
 const signupLimiter = rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,
-    max: Math.max(SIGNUP_LIMIT_MIN, Math.floor(RATE_LIMIT_MAX_REQUESTS / SIGNUP_LIMIT_DIVISOR)),
+    max: Math.max(SIGNUP_RATE_LIMIT_MIN, Math.floor(RATE_LIMIT_MAX_REQUESTS / SIGNUP_RATE_LIMIT_DIVISOR)),
     handler: (req, res /*, next */) => {
         logSiemEvent('RATE_LIMIT_EXCEEDED', {
             route: req.originalUrl || req.url,
@@ -344,7 +339,7 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
             return res.status(400).json({ success: false, error: error.message || 'Signup failed.', correlationId: req.correlationId });
         }
 
-        const identifier = resolveUserIdentifier(data.user, String(email).slice(0, 64));
+        const identifier = resolveUserIdentifier(data.user, String(email));
 
         logSiemEvent('AUTH_SUCCESS', {
             event: 'signup',
