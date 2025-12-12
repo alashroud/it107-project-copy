@@ -109,6 +109,7 @@ const SESSION_TTL_MINUTES = Number(process.env.LOGIN_SESSION_TTL_MINUTES || 60);
 const SESSION_TTL_MS = Number.isFinite(SESSION_TTL_MINUTES) ? SESSION_TTL_MINUTES * 60 * 1000 : 60 * 60 * 1000;
 const activeSessions = new Map(); // token -> { username, expiresAt }
 
+// Supabase user identifiers prefer email for auditability; fall back to id when email is absent.
 function resolveUserIdentifier(user, fallback) {
     if (user && (user.email || user.id)) return user.email || user.id;
     return fallback || null;
@@ -203,8 +204,8 @@ const apiLimiter = rateLimit({
 app.use('/api', apiLimiter);
 
 // Dedicated limiter for signup endpoint to reduce abuse
-const SIGNUP_RATE_LIMIT_DIVISOR = Number(process.env.SIGNUP_RATE_LIMIT_DIVISOR || 5);
-const SIGNUP_RATE_LIMIT_MIN = Number(process.env.SIGNUP_RATE_LIMIT_MIN || 10);
+const SIGNUP_RATE_LIMIT_DIVISOR = Math.max(1, Number(process.env.SIGNUP_RATE_LIMIT_DIVISOR || 5));
+const SIGNUP_RATE_LIMIT_MIN = Math.max(1, Number(process.env.SIGNUP_RATE_LIMIT_MIN || 10));
 const signupLimiter = rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,
     max: Math.max(SIGNUP_RATE_LIMIT_MIN, Math.floor(RATE_LIMIT_MAX_REQUESTS / SIGNUP_RATE_LIMIT_DIVISOR)),
@@ -270,7 +271,7 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ success: false, error: 'Invalid username or password.', correlationId: req.correlationId });
         }
 
-        const identifier = resolveUserIdentifier(data.user, String(username));
+        const identifier = resolveUserIdentifier(data.user, null);
         if (!identifier) {
             logSiemEvent('AUTH_FAILED', {
                 reason: 'Supabase user identifier missing',
@@ -339,7 +340,13 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
             return res.status(400).json({ success: false, error: error.message || 'Signup failed.', correlationId: req.correlationId });
         }
 
-        const identifier = resolveUserIdentifier(data.user, String(email));
+        const identifier = resolveUserIdentifier(data.user, null);
+        if (!identifier) {
+            logSiemEvent('AUTH_FAILED', {
+                reason: 'Supabase user identifier missing (signup)'
+            }, req, req.correlationId);
+            return res.status(500).json({ success: false, error: 'Signup failed.', correlationId: req.correlationId });
+        }
 
         logSiemEvent('AUTH_SUCCESS', {
             event: 'signup',
