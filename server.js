@@ -163,13 +163,20 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// SIEM Security Metrics Endpoint (protected - should be restricted in production)
+// SIEM Security Metrics Endpoint
+// ⚠️  WARNING: This endpoint exposes sensitive security information.
+// ⚠️  In production, this MUST be protected with:
+//     - IP whitelisting
+//     - API key authentication (e.g., using hmacAuthMiddleware)
+//     - Network-level restrictions (VPN, internal network only)
+//     - Or completely disabled for public access
+// Example protection: app.get('/api/security/metrics', hmacAuthMiddleware(process.env.METRICS_SECRET), (req, res) => {
 app.get('/api/security/metrics', (req, res) => {
-    // In production, this should be protected with authentication
-    // For now, we'll allow it but log access
+    // Log all access to security metrics for auditing
     logSiemEvent('DATA_ACCESS', {
         resource: 'security-metrics',
-        action: 'read'
+        action: 'read',
+        warning: 'Endpoint accessed without authentication - secure in production'
     }, req, req.correlationId);
 
     const metrics = getSecurityMetrics();

@@ -51,6 +51,7 @@ class SecurityMetrics {
   constructor() {
     this.events = [];
     this.maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+    this.maxEvents = 10000; // Maximum events to store (prevents memory leaks)
   }
 
   addEvent(event) {
@@ -63,7 +64,14 @@ class SecurityMetrics {
 
   cleanup() {
     const cutoff = Date.now() - this.maxAge;
+    
+    // Remove old events
     this.events = this.events.filter(e => e.timestamp > cutoff);
+    
+    // If still over max limit, remove oldest events
+    if (this.events.length > this.maxEvents) {
+      this.events = this.events.slice(-this.maxEvents);
+    }
   }
 
   getSummary() {

@@ -90,16 +90,26 @@ function verifySignature(req, secret) {
   );
 
   // Compare signatures using constant-time comparison
-  const valid = crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature)
-  );
+  // Ensure both buffers have the same length to avoid timingSafeEqual error
+  try {
+    const signatureBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expectedSignature);
+    
+    // Check if lengths differ (invalid signature)
+    if (signatureBuffer.length !== expectedBuffer.length) {
+      return { valid: false, error: 'Invalid signature' };
+    }
+    
+    const valid = crypto.timingSafeEqual(signatureBuffer, expectedBuffer);
 
-  if (!valid) {
-    return { valid: false, error: 'Invalid signature' };
+    if (!valid) {
+      return { valid: false, error: 'Invalid signature' };
+    }
+
+    return { valid: true, clientId };
+  } catch (error) {
+    return { valid: false, error: 'Signature verification failed' };
   }
-
-  return { valid: true, clientId };
 }
 
 /**

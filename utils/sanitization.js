@@ -82,6 +82,9 @@ function sanitizeObject(obj, options = {}) {
   if (typeof obj === 'object') {
     const sanitized = {};
     for (const [key, value] of Object.entries(obj)) {
+      // Note: Sanitizing keys may break APIs that expect specific key formats.
+      // In production, consider using key allowlisting or making this configurable.
+      // For now, we sanitize keys to prevent injection through property names.
       const sanitizedKey = sanitizeString(key, { maxLength: 100, allowSpecialChars: false });
       sanitized[sanitizedKey] = sanitizeObject(value, options);
     }
@@ -108,8 +111,9 @@ function sanitizeEmail(email) {
 
   const sanitized = email.trim().toLowerCase();
 
-  // Basic email validation regex
-  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  // More restrictive email validation regex for production use
+  // Prevents common bypass techniques while supporting standard email formats
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
   if (!emailRegex.test(sanitized)) {
     return { valid: false, error: 'Invalid email format' };
