@@ -4,6 +4,7 @@ node_modules/
 
 # Environment variables
 .env*
+!/.env.local.example
 
 # Log files
 logs/
