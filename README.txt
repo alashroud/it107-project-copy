@@ -31,7 +31,7 @@ Local Setup
    ```
 2. Copy the sample env file and set your real key:
    ```
-   cp env.local.example .env.local
+   cp .env.local.example .env.local
    ```
    Obtain a key from https://exchangerate-api.com and set `EXCHANGE_RATE_API_KEY`.
 3. Start the local dev server:
