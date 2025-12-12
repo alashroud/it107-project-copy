@@ -316,6 +316,10 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
         return res.status(400).json({ success: false, error: 'Email and password are required.', correlationId: req.correlationId });
     }
     if (!supabase) {
+        logSiemEvent('AUTH_FAILED', {
+            reason: 'Supabase not configured',
+            path: req.path
+        }, req, req.correlationId);
         return res.status(500).json({ success: false, error: 'Authentication service unavailable.', correlationId: req.correlationId });
     }
     try {
