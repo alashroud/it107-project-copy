@@ -109,6 +109,10 @@ const SESSION_TTL_MINUTES = Number(process.env.LOGIN_SESSION_TTL_MINUTES || 60);
 const SESSION_TTL_MS = Number.isFinite(SESSION_TTL_MINUTES) ? SESSION_TTL_MINUTES * 60 * 1000 : 60 * 60 * 1000;
 const activeSessions = new Map(); // token -> { username, expiresAt }
 
+function resolveUserIdentifier(user, fallback) {
+    return (user && (user.email || user.id)) || fallback || null;
+}
+
 function createSession(username) {
     const token = uuidv4();
     const expiresAt = Date.now() + SESSION_TTL_MS;
@@ -181,10 +185,26 @@ const apiLimiter = rateLimit({
     standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
     legacyHeaders: false, // Disable the `X-RateLimit-*` headers
     // Skip rate limiting for health checks and security metrics (optional)
-    skip: (req) => req.path === '/api/health' || req.path === '/api/security/metrics'
+    skip: (req) => req.path === '/api/health' || req.path === '/api/security/metrics' || req.path === '/api/signup'
 });
 
 app.use('/api', apiLimiter);
+
+// Dedicated limiter for signup endpoint to reduce abuse
+const signupLimiter = rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: Math.max(10, Math.floor(RATE_LIMIT_MAX_REQUESTS / 5)),
+    handler: (req, res /*, next */) => {
+        logSiemEvent('RATE_LIMIT_EXCEEDED', {
+            route: req.originalUrl || req.url,
+            origin: req.get && req.get('Origin'),
+            userAgent: req.headers['user-agent']
+        }, req, req.correlationId);
+        return res.status(429).json({ success: false, error: 'Too many signup attempts, please try again later.', correlationId: req.correlationId });
+    },
+    standardHeaders: true,
+    legacyHeaders: false
+});
 
 // Request timeout: set socket timeout on the server after listen
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
@@ -242,15 +262,24 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ success: false, error: 'Invalid username or password.', correlationId: req.correlationId });
         }
 
-        const session = createSession(data.user.email || data.user.id || String(username));
+        const identifier = resolveUserIdentifier(data.user, String(username));
+        if (!identifier) {
+            logSiemEvent('AUTH_FAILED', {
+                reason: 'Supabase user identifier missing',
+                username: String(username).slice(0, 64)
+            }, req, req.correlationId);
+            return res.status(500).json({ success: false, error: 'Authentication failed.', correlationId: req.correlationId });
+        }
+
+        const session = createSession(identifier);
         logSiemEvent('AUTH_SUCCESS', {
-            username: data.user.email || data.user.id || String(username)
+            username: identifier
         }, req, req.correlationId);
 
         return res.json({
             success: true,
             token: session.token,
-            username: data.user.email || data.user.id || String(username),
+            username: identifier,
             expiresAt: session.expiresAt,
             expiresInSeconds: Math.floor((session.expiresAt - Date.now()) / 1000),
             correlationId: req.correlationId
@@ -277,7 +306,7 @@ app.post('/api/logout', authMiddleware, (req, res) => {
 });
 
 // Optional signup endpoint to create Supabase-managed users
-app.post('/api/signup', async (req, res) => {
+app.post('/api/signup', signupLimiter, async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) {
         return res.status(400).json({ success: false, error: 'Email and password are required.', correlationId: req.correlationId });
@@ -300,15 +329,17 @@ app.post('/api/signup', async (req, res) => {
             return res.status(400).json({ success: false, error: error.message || 'Signup failed.', correlationId: req.correlationId });
         }
 
+        const identifier = resolveUserIdentifier(data.user, String(email).slice(0, 64));
+
         logSiemEvent('AUTH_SUCCESS', {
             event: 'signup',
-            email: data.user?.email || String(email).slice(0, 64)
+            email: identifier
         }, req, req.correlationId);
 
         return res.json({
             success: true,
             userId: data.user?.id,
-            email: data.user?.email || String(email),
+            email: identifier,
             requiresEmailConfirmation: !data.session,
             correlationId: req.correlationId
         });
