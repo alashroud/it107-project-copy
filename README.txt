@@ -58,6 +58,40 @@ Security Notes
 --------------
 - Never commit `.env.local` or API keys to git.
 - Rate limiting, logging, and additional validation can be added in `api/convert.js`.
+- **NEW**: Comprehensive security features including SIEM, HMAC authentication, and threat detection.
+- See `SECURITY.md` for detailed security documentation.
+
+Security Features (NEW)
+-----------------------
+This application now includes enterprise-grade security features:
+
+1. **SIEM (Security Information and Event Management)**
+   - Event correlation with unique correlation IDs
+   - Security metrics tracking and monitoring
+   - Severity-based event categorization
+   - Access metrics at `/api/security/metrics`
+
+2. **HMAC-Based Authentication**
+   - Secure API request signing
+   - Time-based signature validation
+   - Multi-client support
+
+3. **Input Sanitization**
+   - Automatic XSS protection
+   - SQL injection prevention
+   - Path traversal detection
+
+4. **Suspicious Activity Detection**
+   - Real-time threat detection
+   - Automatic blocking of malicious patterns
+   - Detailed security event logging
+
+5. **Enhanced Security Headers**
+   - Helmet.js security headers
+   - Content Security Policy
+   - HSTS, X-Frame-Options, etc.
+
+For complete security documentation, see `SECURITY.md`.
 
 CORS Configuration (optional)
 -----------------------------
