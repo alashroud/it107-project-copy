@@ -20,8 +20,13 @@ The currency converter now uses Supabase-managed authentication. Create users in
    ```
 3. Save the file. These values are read by `server.js` at startup.
 
-## 3) Create a user in Supabase
-Use the Supabase dashboard (Auth > Users) to create an email/password user, or send a POST to `/api/signup` with `{ "email": "user@example.com", "password": "strong-password" }`.
+## 3) Create a user in Supabase (step-by-step)
+1. Go to https://app.supabase.com and open your project.
+2. In the left nav, choose **Auth** → **Users**.
+3. Click **Add user** (or **Create new user**), then enter the email and password you want to use.
+4. Leave "Send confirmation email" unchecked if you want the user active immediately, or keep it checked to require confirmation.
+5. Click **Create user** to save.
+6. (Optional) You can also create users via API by POSTing to `/api/signup` with `{ "email": "user@example.com", "password": "strong-password" }`.
 
 ## 4) Start the application
 ```bash
