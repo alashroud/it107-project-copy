@@ -10,6 +10,15 @@ require('dotenv').config();
 const { logger, logRequest, logSecurityEvent, logError, getClientIP } = require('./utils/logger');
 const { getFallbackRate } = require('./utils/fallbackRates');
 
+// Import SIEM and security protocol utilities
+const {
+  logSiemEvent,
+  correlationMiddleware,
+  suspiciousActivityMiddleware,
+  getSecurityMetrics
+} = require('./utils/siem');
+const { sanitizationMiddleware } = require('./utils/sanitization');
+
 const app = express();
 // Body parsing limits (protect from large payload DoS)
 const BODY_LIMIT = process.env.BODY_LIMIT || '10kb';
@@ -19,8 +28,17 @@ app.use(express.urlencoded({ limit: BODY_LIMIT, extended: false }));
 // Security headers
 app.use(helmet());
 
+// SIEM: Add correlation ID to all requests for traceability
+app.use(correlationMiddleware);
+
 // Request logging middleware (should be early in the chain)
 app.use(logRequest);
+
+// Input sanitization middleware for security
+app.use(sanitizationMiddleware({ logSanitization: true }));
+
+// Detect and block suspicious activity patterns
+app.use(suspiciousActivityMiddleware);
 
 const PORT = process.env.PORT || 3000;
 const EXCHANGE_API_BASE = 'https://v6.exchangerate-api.com/v6';
@@ -86,11 +104,11 @@ app.use('/api', (req, res, next) => {
     
     // Check if origin would be blocked
     if (origin && !isOriginAllowed(origin)) {
-        logSecurityEvent('CORS_BLOCKED', {
+        logSiemEvent('CORS_BLOCKED', {
             blockedOrigin: origin,
             path: req.path,
             method: req.method
-        }, req);
+        }, req, req.correlationId);
     }
     
     cors(corsOptions)(req, res, next);
@@ -107,17 +125,17 @@ const apiLimiter = rateLimit({
     max: RATE_LIMIT_MAX_REQUESTS,
     // Custom handler logs the event and returns a consistent JSON response
     handler: (req, res /*, next */) => {
-        logSecurityEvent('RATE_LIMIT_EXCEEDED', {
+        logSiemEvent('RATE_LIMIT_EXCEEDED', {
             route: req.originalUrl || req.url,
             origin: req.get && req.get('Origin'),
             userAgent: req.headers['user-agent']
-        }, req);
-        return res.status(429).json({ success: false, error: 'Too many requests, please try again later.' });
+        }, req, req.correlationId);
+        return res.status(429).json({ success: false, error: 'Too many requests, please try again later.', correlationId: req.correlationId });
     },
     standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
     legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-    // Skip rate limiting for health checks (optional; comment out to rate-limit health checks too)
-    skip: (req) => req.path === '/api/health'
+    // Skip rate limiting for health checks and security metrics (optional)
+    skip: (req) => req.path === '/api/health' || req.path === '/api/security/metrics'
 });
 
 app.use('/api', apiLimiter);
@@ -140,7 +158,33 @@ app.get('/api/health', (req, res) => {
     res.json({
         status: 'ok',
         message: 'Currency converter API is healthy.',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        correlationId: req.correlationId
+    });
+});
+
+// SIEM Security Metrics Endpoint
+// ⚠️  WARNING: This endpoint exposes sensitive security information.
+// ⚠️  In production, this MUST be protected with:
+//     - IP whitelisting
+//     - API key authentication (e.g., using hmacAuthMiddleware)
+//     - Network-level restrictions (VPN, internal network only)
+//     - Or completely disabled for public access
+// Example protection: app.get('/api/security/metrics', hmacAuthMiddleware(process.env.METRICS_SECRET), (req, res) => {
+app.get('/api/security/metrics', (req, res) => {
+    // Log all access to security metrics for auditing
+    logSiemEvent('DATA_ACCESS', {
+        resource: 'security-metrics',
+        action: 'read',
+        warning: 'Endpoint accessed without authentication - secure in production'
+    }, req, req.correlationId);
+
+    const metrics = getSecurityMetrics();
+    res.json({
+        success: true,
+        metrics,
+        timestamp: new Date().toISOString(),
+        correlationId: req.correlationId
     });
 });
 
@@ -149,25 +193,25 @@ app.get('/api/convert', async (req, res) => {
     const apiKey = process.env.EXCHANGE_RATE_API_KEY;
 
     if (!from || !to) {
-        logSecurityEvent('VALIDATION_FAILED', {
+        logSiemEvent('VALIDATION_FAILED', {
             reason: 'Missing required query parameters',
             providedParams: Object.keys(req.query || {}),
             path: req.path
-        }, req);
-        return res.status(400).json({ success: false, error: 'Missing required query parameters "from" and "to".' });
+        }, req, req.correlationId);
+        return res.status(400).json({ success: false, error: 'Missing required query parameters "from" and "to".', correlationId: req.correlationId });
     }
 
     const fromCurrency = String(from).toUpperCase();
     const toCurrency = String(to).toUpperCase();
 
     if (!validateCurrencyCode(fromCurrency) || !validateCurrencyCode(toCurrency)) {
-        logSecurityEvent('VALIDATION_FAILED', {
+        logSiemEvent('VALIDATION_FAILED', {
             reason: 'Invalid currency code',
             fromCurrency,
             toCurrency,
             path: req.path
-        }, req);
-        return res.status(400).json({ success: false, error: 'Currency codes must be supported 3-letter ISO codes.' });
+        }, req, req.correlationId);
+        return res.status(400).json({ success: false, error: 'Currency codes must be supported 3-letter ISO codes.', correlationId: req.correlationId });
     }
 
     const fallback = getFallbackRate(fromCurrency, toCurrency);
@@ -177,31 +221,31 @@ app.get('/api/convert', async (req, res) => {
         if (Object.prototype.hasOwnProperty.call(req.query, 'amount')) {
             const rawAmt = String(amount).trim();
             if (!/^[+-]?\d+(?:\.\d+)?$/.test(rawAmt)) {
-                logSecurityEvent('VALIDATION_FAILED', {
+                logSiemEvent('VALIDATION_FAILED', {
                     reason: 'Invalid amount format',
                     providedAmount: rawAmt,
                     path: req.path
-                }, req);
-                return res.status(400).json({ success: false, error: '"amount" must be a plain decimal number without exponent.' });
+                }, req, req.correlationId);
+                return res.status(400).json({ success: false, error: '"amount" must be a plain decimal number without exponent.', correlationId: req.correlationId });
             }
             const num = Number(rawAmt);
             if (!Number.isFinite(num) || Number.isNaN(num) || num < 0) {
-                logSecurityEvent('VALIDATION_FAILED', {
+                logSiemEvent('VALIDATION_FAILED', {
                     reason: 'Invalid or negative amount',
                     providedAmount: rawAmt,
                     parsedValue: num,
                     path: req.path
-                }, req);
-                return res.status(400).json({ success: false, error: 'Invalid or negative "amount" provided.' });
+                }, req, req.correlationId);
+                return res.status(400).json({ success: false, error: 'Invalid or negative "amount" provided.', correlationId: req.correlationId });
             }
             if (rawAmt.split('.')[1] && rawAmt.split('.')[1].length > 8) {
-                logSecurityEvent('VALIDATION_FAILED', {
+                logSiemEvent('VALIDATION_FAILED', {
                     reason: 'Amount exceeds decimal precision limit',
                     providedAmount: rawAmt,
                     decimalPlaces: rawAmt.split('.')[1].length,
                     path: req.path
-                }, req);
-                return res.status(400).json({ success: false, error: '"amount" may have at most 8 decimal places.' });
+                }, req, req.correlationId);
+                return res.status(400).json({ success: false, error: '"amount" may have at most 8 decimal places.', correlationId: req.correlationId });
             }
             convertedAmount = Number((num * rate).toFixed(6));
         }
@@ -213,7 +257,8 @@ app.get('/api/convert', async (req, res) => {
             from: fromCurrency,
             to: toCurrency,
             lastUpdated: lastUpdated || new Date().toISOString(),
-            source
+            source,
+            correlationId: req.correlationId
         });
     };
 
@@ -278,12 +323,12 @@ app.get('/api/convert', async (req, res) => {
 app.get('*', (req, res) => {
     // Check if this is an API route that doesn't exist
     if (req.path.startsWith('/api/')) {
-        logSecurityEvent('SUSPICIOUS_ROUTE', {
+        logSiemEvent('SUSPICIOUS_PATTERN', {
             reason: 'Non-existent API endpoint accessed',
             attemptedPath: req.path,
             query: req.query
-        }, req);
-        return res.status(404).json({ success: false, error: 'API endpoint not found' });
+        }, req, req.correlationId);
+        return res.status(404).json({ success: false, error: 'API endpoint not found', correlationId: req.correlationId });
     }
     
     // Log suspicious non-API routes that might indicate reconnaissance
@@ -295,11 +340,11 @@ app.get('*', (req, res) => {
     
     const isSuspicious = suspiciousPatterns.some(pattern => pattern.test(req.path));
     if (isSuspicious) {
-        logSecurityEvent('SUSPICIOUS_ROUTE', {
+        logSiemEvent('SUSPICIOUS_PATTERN', {
             reason: 'Suspicious path pattern detected',
             attemptedPath: req.path,
             query: req.query
-        }, req);
+        }, req, req.correlationId);
     }
     
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
