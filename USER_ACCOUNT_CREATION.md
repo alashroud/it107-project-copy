@@ -1,6 +1,6 @@
 # User Account Creation (Step-by-Step)
 
-The currency converter uses a simple, environment-driven login. To create a new user account, you define the username and password in environment variables and then sign in through the login form.
+The currency converter now uses Supabase-managed authentication. Create users in Supabase (or with the optional `/api/signup` endpoint) and sign in through the login form.
 
 ## 1) Prerequisites
 - Node.js 18+ installed locally
@@ -9,34 +9,36 @@ The currency converter uses a simple, environment-driven login. To create a new 
   npm install
   ```
 
-## 2) Create your account credentials
-1. In the project root, copy `.env.local.example` to `.env.local` (or create `.env.local` manually if you prefer).
-2. Add your desired login values (replace the example values with your own):
+## 2) Configure Supabase
+1. In the project root, copy `.env.local.example` to `.env.local`.
+2. Set your Supabase values:
    ```env
-   APP_USERNAME=myuser
-   APP_PASSWORD=your-secure-password-here
-   # Optional: adjust how long a login session lasts (minutes)
+   SUPABASE_URL=your-supabase-url
+   SUPABASE_ANON_KEY=your-supabase-anon-key
+   # Optional: adjust how long a server session lasts (minutes)
    LOGIN_SESSION_TTL_MINUTES=60
    ```
 3. Save the file. These values are read by `server.js` at startup.
 
-## 3) Start the application
+## 3) Create a user in Supabase
+Use the Supabase dashboard (Auth > Users) to create an email/password user, or send a POST to `/api/signup` with `{ "email": "user@example.com", "password": "strong-password" }`.
+
+## 4) Start the application
 ```bash
 npm run dev
 ```
 The app will start on http://localhost:3000.
 
-## 4) Sign in with your new account
+## 5) Sign in with your Supabase account
 1. Open http://localhost:3000 in your browser.
-2. Enter the username and password you set in `.env.local`.
-3. Submit the form to authenticate and create a login session. If successful, the currency converter becomes available and your session remains active for the configured TTL.
+2. Enter the email and password of the Supabase user you created.
+3. Submit the form to authenticate via Supabase and create a server session. If successful, the currency converter becomes available and your session remains active for the configured TTL.
 
-## 5) Log out (optional)
+## 6) Log out (optional)
 Use the "Log Out" control in the UI to end the session. You can sign back in anytime with the same credentials.
 
 ## Notes and security tips
-- ⚠️ If you do not set `APP_USERNAME`/`APP_PASSWORD`, the defaults are `admin` / `password123` for local development only—change them before deploying or sharing the app.
-- Always set strong values (12+ characters, mix of upper/lowercase, numbers, and symbols) before running anywhere beyond local development.
-- In production, store credentials with a secret manager or environment variable tooling, and set `APP_USERNAME`/`APP_PASSWORD` before starting the server instead of relying on the built-in defaults.
+- Use strong passwords (12+ characters, mix of upper/lowercase, numbers, and symbols).
+- In production, keep the Supabase anon key and any service keys in a secret manager or environment variable tooling. Do not commit secrets.
 - Keep `.env.local` out of version control to avoid exposing credentials.
 - You can rotate credentials at any time by updating `.env.local` and restarting the server.

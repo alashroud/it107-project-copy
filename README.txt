@@ -43,12 +43,7 @@ Local Setup
 
 Login
 -----
-The converter now requires a simple login. Configure credentials with environment
-variables (defaults: `admin` / `password123`):
-
-- `APP_USERNAME` — username for login
-- `APP_PASSWORD` — password for login
-- `LOGIN_SESSION_TTL_MINUTES` — session duration in minutes (default: 60)
+Authentication now uses Supabase-managed auth. Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` in `.env.local`, create a user in Supabase (email/password), then sign in via the app. Session duration is controlled by `LOGIN_SESSION_TTL_MINUTES` (default: 60).
 
 Deployment
 ----------

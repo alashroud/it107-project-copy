@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
+const { createClient } = require('@supabase/supabase-js');
 const fetch = (...args) => import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
 const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
@@ -99,9 +100,11 @@ const corsOptions = {
     optionsSuccessStatus: Number(process.env.CORS_OPTIONS_SUCCESS_STATUS || 204)
 };
 
-// Simple login configuration using environment variables (with safe defaults for local use)
-const AUTH_USERNAME = process.env.APP_USERNAME || 'admin';
-const AUTH_PASSWORD = process.env.APP_PASSWORD || 'password123';
+// Supabase configuration for managed auth
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
 const SESSION_TTL_MINUTES = Number(process.env.LOGIN_SESSION_TTL_MINUTES || 60);
 const SESSION_TTL_MS = Number.isFinite(SESSION_TTL_MINUTES) ? SESSION_TTL_MINUTES * 60 * 1000 : 60 * 60 * 1000;
 const activeSessions = new Map(); // token -> { username, expiresAt }
@@ -206,7 +209,7 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
     const { username, password } = req.body || {};
     if (!username || !password) {
         logSiemEvent('AUTH_FAILED', {
@@ -216,27 +219,51 @@ app.post('/api/login', (req, res) => {
         return res.status(400).json({ success: false, error: 'Username and password are required.', correlationId: req.correlationId });
     }
 
-    if (String(username) !== AUTH_USERNAME || String(password) !== AUTH_PASSWORD) {
+    if (!supabase) {
         logSiemEvent('AUTH_FAILED', {
-            reason: 'Invalid credentials',
-            username: String(username).slice(0, 64)
+            reason: 'Supabase not configured',
+            path: req.path
         }, req, req.correlationId);
-        return res.status(401).json({ success: false, error: 'Invalid username or password.', correlationId: req.correlationId });
+        return res.status(500).json({ success: false, error: 'Authentication service unavailable.', correlationId: req.correlationId });
     }
 
-    const session = createSession(String(username));
-    logSiemEvent('AUTH_SUCCESS', {
-        username: String(username)
-    }, req, req.correlationId);
+    try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email: String(username),
+            password: String(password)
+        });
 
-    return res.json({
-        success: true,
-        token: session.token,
-        username: String(username),
-        expiresAt: session.expiresAt,
-        expiresInSeconds: Math.floor((session.expiresAt - Date.now()) / 1000),
-        correlationId: req.correlationId
-    });
+        if (error || !data?.user) {
+            logSiemEvent('AUTH_FAILED', {
+                reason: 'Invalid credentials (Supabase)',
+                username: String(username).slice(0, 64),
+                supabaseError: error?.message
+            }, req, req.correlationId);
+            return res.status(401).json({ success: false, error: 'Invalid username or password.', correlationId: req.correlationId });
+        }
+
+        const session = createSession(data.user.email || data.user.id || String(username));
+        logSiemEvent('AUTH_SUCCESS', {
+            username: data.user.email || data.user.id || String(username)
+        }, req, req.correlationId);
+
+        return res.json({
+            success: true,
+            token: session.token,
+            username: data.user.email || data.user.id || String(username),
+            expiresAt: session.expiresAt,
+            expiresInSeconds: Math.floor((session.expiresAt - Date.now()) / 1000),
+            correlationId: req.correlationId
+        });
+    } catch (err) {
+        logError(err, { message: 'Supabase login failed' });
+        logSiemEvent('AUTH_FAILED', {
+            reason: 'Supabase auth error',
+            username: String(username).slice(0, 64),
+            error: err?.message
+        }, req, req.correlationId);
+        return res.status(500).json({ success: false, error: 'Authentication failed.', correlationId: req.correlationId });
+    }
 });
 
 app.post('/api/logout', authMiddleware, (req, res) => {
@@ -247,6 +274,48 @@ app.post('/api/logout', authMiddleware, (req, res) => {
         username: req.user?.username
     }, req, req.correlationId);
     return res.json({ success: true, correlationId: req.correlationId });
+});
+
+// Optional signup endpoint to create Supabase-managed users
+app.post('/api/signup', async (req, res) => {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+        return res.status(400).json({ success: false, error: 'Email and password are required.', correlationId: req.correlationId });
+    }
+    if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Authentication service unavailable.', correlationId: req.correlationId });
+    }
+    try {
+        const { data, error } = await supabase.auth.signUp({
+            email: String(email),
+            password: String(password)
+        });
+
+        if (error) {
+            logSiemEvent('AUTH_FAILED', {
+                reason: 'Supabase signup failed',
+                email: String(email).slice(0, 64),
+                supabaseError: error?.message
+            }, req, req.correlationId);
+            return res.status(400).json({ success: false, error: error.message || 'Signup failed.', correlationId: req.correlationId });
+        }
+
+        logSiemEvent('AUTH_SUCCESS', {
+            event: 'signup',
+            email: data.user?.email || String(email).slice(0, 64)
+        }, req, req.correlationId);
+
+        return res.json({
+            success: true,
+            userId: data.user?.id,
+            email: data.user?.email || String(email),
+            requiresEmailConfirmation: !data.session,
+            correlationId: req.correlationId
+        });
+    } catch (err) {
+        logError(err, { message: 'Supabase signup failed' });
+        return res.status(500).json({ success: false, error: 'Signup failed.', correlationId: req.correlationId });
+    }
 });
 
 // SIEM Security Metrics Endpoint
